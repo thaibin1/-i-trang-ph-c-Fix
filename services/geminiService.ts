@@ -1,3 +1,6 @@
+const API_KEY =AIzaSyAPCyQtCssOnBiQYzFkdnuTN46eNxndOyw
+  localStorage.getItem("gemini_api_key") ||
+  import.meta.env.VITE_GEMINI_API_KEY;
 
 import { GoogleGenAI, Type, GenerateContentResponse } from "@google/genai";
 import { ImageAsset } from "../types";
