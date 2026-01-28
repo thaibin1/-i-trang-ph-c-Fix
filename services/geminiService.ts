@@ -1,30 +1,7 @@
-const API_KEY = AIzaSyAPCyQtCssOnBiQYzFkdnuTN46eNxndOyw
-  localStorage.getItem("gemini_api_key") ||
-  import.meta.env.VITE_GEMINI_API_KEY;
 
+// Fix: Use standard imports and ensure manual key logic is removed.
 import { GoogleGenAI, Type, GenerateContentResponse } from "@google/genai";
 import { ImageAsset } from "../types";
-
-// Manage Manual API Key
-let manualApiKey: string | null = typeof window !== 'undefined' ? localStorage.getItem('gemini_api_key') : null;
-
-export const setManualApiKey = (key: string) => {
-  manualApiKey = key;
-  if (typeof window !== 'undefined') {
-    localStorage.setItem('gemini_api_key', key);
-  }
-};
-
-export const clearManualApiKey = () => {
-  manualApiKey = null;
-  if (typeof window !== 'undefined') {
-    localStorage.removeItem('gemini_api_key');
-  }
-};
-
-const getApiKey = () => {
-  return manualApiKey || process.env.API_KEY;
-};
 
 // Helper to remove data URL prefix for API
 const cleanBase64 = (dataUrl: string) => {
@@ -98,9 +75,21 @@ const extractImageFromResponse = (response: any): string => {
 const handleError = (error: any) => {
   console.error("Gemini API Error:", error);
   const errorMsg = error.message || "";
-  if (errorMsg.includes('404') || errorMsg.includes('not found') || errorMsg.includes('API key')) {
-       throw new Error("Lỗi API Key: Vui lòng kiểm tra lại key.");
+  
+  // Handle 403 Permission Denied specifically
+  if (errorMsg.includes('403') || errorMsg.includes('PERMISSION_DENIED') || errorMsg.toLowerCase().includes('permission denied')) {
+    throw new Error("Lỗi 403 (Permission Denied): Project của bạn có thể chưa bật Billing hoặc model này yêu cầu Key từ một dự án Google Cloud có trả phí. Vui lòng kiểm tra lại tại ai.google.dev/gemini-api/docs/billing");
   }
+
+  // Handle 404 Requested entity was not found
+  if (errorMsg.includes('404') || errorMsg.includes('Requested entity was not found')) {
+    throw new Error("Lỗi 404: Không tìm thấy model hoặc tài nguyên. Có thể key của bạn không có quyền truy cập model này. Thử chọn lại API Key.");
+  }
+
+  if (errorMsg.includes('API key')) {
+       throw new Error("Lỗi API Key: Key không hợp lệ hoặc đã hết hạn.");
+  }
+  
   throw new Error(errorMsg || "Xử lý thất bại.");
 };
 
@@ -116,10 +105,8 @@ const executeSingleTryOn = async (
   imageSize: string,
   modelName: string
 ): Promise<string | null> => {
-  const apiKey = getApiKey();
-  if (!apiKey) return null;
-
-  const ai = new GoogleGenAI({ apiKey });
+  // Fix: Create new instance right before use to ensure latest API Key.
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
   const basePrompt = `
     You are a professional AI fashion photo editor.
@@ -179,7 +166,8 @@ const executeSingleTryOn = async (
     
     return extractImageFromResponse(response);
   } catch (error: any) {
-    throw error;
+    handleError(error);
+    return null;
   }
 };
 
@@ -190,13 +178,10 @@ export const generateVirtualTryOn = async (
   accessoryImage: ImageAsset | null,
   instructions: string,
   aspectRatio: string = "9:16",
-  imageSize: string = "2K",
+  imageSize: string = "4K",
   modelName: string = "gemini-3-pro-image-preview",
   count: number = 1
 ): Promise<string[]> => {
-  const apiKey = getApiKey();
-  if (!apiKey) throw new Error("Thiếu API Key.");
-
   const tasks = [];
   for (let i = 0; i < count; i++) {
     tasks.push(executeSingleTryOn(
@@ -235,13 +220,12 @@ export const changeImageBackground = async (
   backgroundPrompt: string = "A modern studio background.",
   detailImage: ImageAsset | null = null,
   aspectRatio: string = "9:16",
-  imageSize: string = "2K",
+  imageSize: string = "4K",
   modelName: string = "gemini-3-pro-image-preview",
   customBgImage: ImageAsset | null = null
 ): Promise<string> => {
-  const apiKey = getApiKey();
-  if (!apiKey) throw new Error("Thiếu API Key.");
-  const ai = new GoogleGenAI({ apiKey });
+  // Fix: Create new instance right before use to ensure latest API Key.
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
   const prompt = `Keep the subject identical. Replace background with: ${customBgImage ? 'the environment from the reference' : backgroundPrompt}.`;
   const parts: any[] = [{ inlineData: { mimeType: 'image/png', data: cleanBase64(imageDataUrl) } }];
@@ -270,41 +254,52 @@ export const changeImageBackgroundBatch = async (
   prompts: string[],
   detailImage: ImageAsset | null = null,
   aspectRatio: string = "9:16",
-  imageSize: string = "2K",
+  imageSize: string = "4K",
   modelName: string = "gemini-3-pro-image-preview",
   customBgImage: ImageAsset | null = null
 ): Promise<string[]> => {
-  const results = await Promise.all(prompts.map(p => changeImageBackground(imageDataUrl, p, detailImage, aspectRatio, imageSize, modelName, customBgImage).catch(() => null)));
+  const results = await Promise.all(prompts.map(p => changeImageBackground(imageDataUrl, p, detailImage, aspectRatio, imageSize, modelName, customBgImage).catch((e) => {
+    console.error("Batch background error item:", e);
+    return null;
+  })));
   return results.filter((r): r is string => r !== null);
 };
 
 export const analyzeOutfit = async (image: ImageAsset, detailImage: ImageAsset | null): Promise<string> => {
-  const apiKey = getApiKey();
-  if (!apiKey) throw new Error("Thiếu API Key.");
-  const ai = new GoogleGenAI({ apiKey });
+  // Fix: Create new instance right before use to ensure latest API Key.
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   const parts: any[] = [{ inlineData: { mimeType: image.mimeType, data: cleanBase64(image.data) } }];
   if (detailImage) parts.push({ inlineData: { mimeType: detailImage.mimeType, data: cleanBase64(detailImage.data) } });
   parts.push({ text: "Describe this outfit for high-quality video generation." });
-  const response = await ai.models.generateContent({ model: 'gemini-3-pro-preview', contents: { parts } });
-  return response.text || "";
+  try {
+    const response = await ai.models.generateContent({ model: 'gemini-3-pro-preview', contents: { parts } });
+    return response.text || "";
+  } catch (e) {
+    handleError(e);
+    return "";
+  }
 };
 
 export const generatePromptsFromAnalysis = async (analysis: string, count: number): Promise<string[]> => {
-  const apiKey = getApiKey();
-  if (!apiKey) throw new Error("Thiếu API Key.");
-  const ai = new GoogleGenAI({ apiKey });
-  const response = await ai.models.generateContent({
-    model: 'gemini-3-pro-preview',
-    contents: analysis,
-    config: {
-      systemInstruction: `Generate ${count} video motion prompts. Return JSON { "prompts": [] }.`,
-      responseMimeType: 'application/json',
-      responseSchema: {
-        type: Type.OBJECT,
-        properties: { prompts: { type: Type.ARRAY, items: { type: Type.STRING } } }
+  // Fix: Create new instance right before use to ensure latest API Key.
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  try {
+    const response = await ai.models.generateContent({
+      model: 'gemini-3-pro-preview',
+      contents: analysis,
+      config: {
+        systemInstruction: `Generate ${count} video motion prompts. Return JSON { "prompts": [] }.`,
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: { prompts: { type: Type.ARRAY, items: { type: Type.STRING } } }
+        }
       }
-    }
-  });
-  const parsed = JSON.parse(response.text || "{}");
-  return parsed.prompts || [];
+    });
+    const parsed = JSON.parse(response.text || "{}");
+    return parsed.prompts || [];
+  } catch (e) {
+    handleError(e);
+    return [];
+  }
 };

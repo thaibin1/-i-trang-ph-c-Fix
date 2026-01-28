@@ -1,31 +1,17 @@
 
+// Fix: Correct variable name typos and remove manual API key input UI.
 import React, { useState, useEffect } from 'react';
 import { UploadBox } from './components/UploadBox';
 import { ResultDisplay } from './components/ResultDisplay';
-import { generateVirtualTryOn, changeImageBackground, changeImageBackgroundBatch, analyzeOutfit, generatePromptsFromAnalysis, setManualApiKey, clearManualApiKey } from './services/geminiService';
+import { generateVirtualTryOn, changeImageBackground, analyzeOutfit, generatePromptsFromAnalysis } from './services/geminiService';
 import { ImageAsset, GenerationStatus } from './types';
-import { Sparkles, Shirt, User, LogOut, Lock, Image as ImageIcon, Layout, Copy, Loader2, Video, Check, RefreshCw, X, Monitor, Smartphone, Square, Cpu, Bookmark, Library, Hash, Key } from 'lucide-react';
+import { Sparkles, Shirt, User, LogOut, Lock, Image as ImageIcon, Copy, Loader2, Video, Bookmark, Library, Hash, Key, ExternalLink, X, Cpu } from 'lucide-react';
 
 // --- Constants ---
 const STORAGE_KEY_MODELS = 'swapnet_saved_models';
 
-const ASPECT_RATIOS = [
-  { label: '9:16', value: '9:16', icon: <Smartphone size={14} /> },
-  { label: '3:4', value: '3:4', icon: <Square size={14} className="scale-y-125" /> },
-  { label: '1:1', value: '1:1', icon: <Square size={14} /> },
-  { label: '4:3', value: '4:3', icon: <Square size={14} className="scale-x-125" /> },
-  { label: '16:9', value: '16:9', icon: <Monitor size={14} /> },
-];
-
-const IMAGE_SIZES = [
-  { label: '1K', value: '1K', desc: 'Nhanh' },
-  { label: '2K', value: '2K', desc: 'Sắc nét' },
-  { label: '4K', value: '4K', desc: 'Cực nét' },
-];
-
 const App: React.FC = () => {
   const [hasKey, setHasKey] = useState(false);
-  const [manualKeyInput, setManualKeyInput] = useState('');
   
   const [modelName, setModelName] = useState<string>('gemini-3-pro-image-preview');
   const [activeTab, setActiveTab] = useState<'try-on' | 'background' | 'veo-prompt'>('try-on');
@@ -33,28 +19,27 @@ const App: React.FC = () => {
   // --- MODEL LIBRARY STATE ---
   const [savedModels, setSavedModels] = useState<ImageAsset[]>([]);
 
-  // --- TRY-ON STATE ---
+  // --- TRY-ON STATE (Defaults applied as requested) ---
   const [personImage, setPersonImage] = useState<ImageAsset | null>(null);
   const [garmentImage, setGarmentImage] = useState<ImageAsset | null>(null);
   const [garmentDetailImage, setGarmentDetailImage] = useState<ImageAsset | null>(null);
   const [accessoryImage, setAccessoryImage] = useState<ImageAsset | null>(null);
   const [instructions, setInstructions] = useState('');
-  const [tryOnAspectRatio, setTryOnAspectRatio] = useState<string>("9:16");
-  const [tryOnImageSize, setTryOnImageSize] = useState<string>("2K");
-  const [tryOnCount, setTryOnCount] = useState<number>(1);
+  const tryOnAspectRatio = "9:16";
+  const tryOnImageSize = "4K";
+  const tryOnCount = 1;
   
   const [tryOnStatus, setTryOnStatus] = useState<GenerationStatus>(GenerationStatus.IDLE);
   const [tryOnResult, setTryOnResult] = useState<string | string[] | null>(null);
   const [tryOnError, setTryOnError] = useState<string | null>(null);
 
-  // --- BACKGROUND CHANGE STATE ---
+  // --- BACKGROUND CHANGE STATE (Defaults applied as requested) ---
   const [bgInputImage, setBgInputImage] = useState<ImageAsset | null>(null);
   const [bgDetailImage, setBgDetailImage] = useState<ImageAsset | null>(null);
   const [customBgImage, setCustomBgImage] = useState<ImageAsset | null>(null);
   const [bgPrompt, setBgPrompt] = useState('');
-  const [bgCount, setBgCount] = useState<number>(1);
-  const [bgAspectRatio, setBgAspectRatio] = useState<string>("9:16");
-  const [bgImageSize, setBgImageSize] = useState<string>("2K");
+  const bgAspectRatio = "9:16";
+  const bgImageSize = "4K";
   const [bgStatus, setBgStatus] = useState<GenerationStatus>(GenerationStatus.IDLE);
   const [bgResult, setBgResult] = useState<string | string[] | null>(null);
   const [bgError, setBgError] = useState<string | null>(null);
@@ -70,10 +55,7 @@ const App: React.FC = () => {
 
   useEffect(() => {
     const checkKey = async () => {
-      const storedKey = localStorage.getItem('gemini_api_key');
-      if (storedKey) {
-        setHasKey(true);
-      } else if ((window as any).aistudio) {
+      if ((window as any).aistudio) {
         try {
           const selected = await (window as any).aistudio.hasSelectedApiKey();
           if (selected) setHasKey(true);
@@ -105,20 +87,8 @@ const App: React.FC = () => {
     }
   };
 
-  const handleManualKeySubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (manualKeyInput.trim().length > 10) {
-      setManualApiKey(manualKeyInput.trim());
-      setHasKey(true);
-    } else {
-      alert("API Key không hợp lệ");
-    }
-  };
-
   const handleLogout = () => {
-    clearManualApiKey();
     setHasKey(false);
-    setManualKeyInput('');
     resetAll();
   };
 
@@ -205,6 +175,10 @@ const App: React.FC = () => {
       setTryOnResult(results);
       setTryOnStatus(GenerationStatus.COMPLETED);
     } catch (err: any) {
+      // Fix: If Requested entity was not found, reset hasKey to force re-selection.
+      if (err.message && (err.message.includes('Requested entity was not found') || err.message.includes('404'))) {
+        setHasKey(false);
+      }
       setTryOnStatus(GenerationStatus.FAILED);
       setTryOnError(err.message || "Xử lý thất bại");
     }
@@ -215,16 +189,14 @@ const App: React.FC = () => {
     setBgStatus(GenerationStatus.PROCESSING);
     setBgError(null);
     try {
-      if (bgCount > 1) {
-        const prompts = Array(bgCount).fill(bgPrompt.trim() || "Clean studio background");
-        const results = await changeImageBackgroundBatch(bgInputImage.data, prompts, bgDetailImage, bgAspectRatio, bgImageSize, modelName, customBgImage);
-        setBgResult(results);
-      } else {
-        const result = await changeImageBackground(bgInputImage.data, bgPrompt.trim() || "Clean studio background", bgDetailImage, bgAspectRatio, bgImageSize, modelName, customBgImage);
-        setBgResult(result);
-      }
+      const result = await changeImageBackground(bgInputImage.data, bgPrompt.trim() || "Clean studio background", bgDetailImage, bgAspectRatio, bgImageSize, modelName, customBgImage);
+      setBgResult(result);
       setBgStatus(GenerationStatus.COMPLETED);
     } catch (err: any) {
+      // Fix: If Requested entity was not found, reset hasKey to force re-selection.
+      if (err.message && (err.message.includes('Requested entity was not found') || err.message.includes('404'))) {
+        setHasKey(false);
+      }
       setBgStatus(GenerationStatus.FAILED);
       setBgError(err.message || "Đổi nền thất bại");
     }
@@ -241,9 +213,18 @@ const App: React.FC = () => {
       setVeoPrompts(prompts);
       setVeoStatus(GenerationStatus.COMPLETED);
     } catch (err: any) {
+      // Fix: If Requested entity was not found, reset hasKey to force re-selection.
+      if (err.message && (err.message.includes('Requested entity was not found') || err.message.includes('404'))) {
+        setHasKey(false);
+      }
       setVeoStatus(GenerationStatus.FAILED);
       setVeoError(err.message || "Tạo prompt thất bại");
     }
+  };
+
+  const isPermissionError = (error: string | null) => {
+    if (!error) return false;
+    return error.includes('403') || error.includes('Permission Denied') || error.includes('404');
   };
 
   if (!hasKey) {
@@ -255,22 +236,15 @@ const App: React.FC = () => {
             <Sparkles size={40} className="text-white" />
           </div>
           <h1 className="text-3xl font-bold mb-4">Đổi trang phục AI by Thai Bin</h1>
-          <p className="text-gray-400 mb-6">Sử dụng Gemini 3 Pro để tạo hình ảnh chất lượng cao.</p>
-          <button onClick={handleConnectKey} className="w-full py-3 px-6 bg-white text-dark hover:bg-gray-200 rounded-xl font-bold text-lg flex items-center justify-center gap-3 transition-colors mb-6">
-            <Key size={20} /> Chọn Key qua AI Studio
+          <p className="text-gray-400 mb-6">Sử dụng Gemini 3 Pro để tạo hình ảnh chất lượng cao 4K.</p>
+          <button onClick={handleConnectKey} className="w-full py-4 px-6 bg-white text-dark hover:bg-gray-200 rounded-xl font-bold text-lg flex items-center justify-center gap-3 transition-colors mb-6 shadow-xl">
+            <Key size={24} /> Chọn Key qua AI Studio
           </button>
-          <div className="flex items-center gap-4 mb-6">
-            <div className="h-px bg-gray-700 flex-1"></div>
-            <span className="text-gray-500 text-sm">HOẶC NHẬP THỦ CÔNG</span>
-            <div className="h-px bg-gray-700 flex-1"></div>
-          </div>
-          <form onSubmit={handleManualKeySubmit} className="flex flex-col gap-3">
-             <div className="relative">
-               <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-500"><Lock size={16} /></div>
-               <input type="password" value={manualKeyInput} onChange={(e) => setManualKeyInput(e.target.value)} placeholder="Dán Google API Key..." className="w-full bg-dark border border-gray-700 rounded-xl py-3 pl-10 pr-4 text-gray-200 focus:ring-2 focus:ring-primary outline-none transition-all placeholder-gray-600" />
-             </div>
-             <button type="submit" disabled={!manualKeyInput} className="w-full py-3 px-6 bg-gradient-to-r from-primary to-secondary text-white rounded-xl font-bold hover:shadow-lg disabled:opacity-50 transition-all">Bắt đầu sử dụng</button>
-          </form>
+          <p className="mt-8 text-xs text-gray-500 leading-relaxed">
+            Lưu ý: Gemini 3 Pro yêu cầu API Key từ project Google Cloud có cấu hình thanh toán (Paid Project). 
+            <br/>
+            <a href="https://ai.google.dev/gemini-api/docs/billing" target="_blank" className="text-primary hover:underline mt-2 inline-flex items-center gap-1">Xem tài liệu billing <ExternalLink size={10} /></a>
+          </p>
         </div>
       </div>
     );
@@ -287,12 +261,9 @@ const App: React.FC = () => {
             <h1 className="text-xl font-bold tracking-tight">AI Creative Studio <span className="text-xs align-top bg-primary/20 text-primary px-1.5 py-0.5 rounded ml-1">by Thai Bin</span></h1>
           </div>
           <div className="flex items-center gap-4 text-sm text-gray-400">
-            <div className="hidden md:flex items-center bg-gray-900 rounded-lg border border-gray-700 px-2 py-1">
+            <div className="hidden md:flex items-center bg-gray-900 rounded-lg border border-gray-700 px-3 py-1">
                <Cpu size={14} className="text-primary mr-2" />
-               <select value={modelName} onChange={(e) => setModelName(e.target.value)} className="bg-transparent text-xs text-gray-300 outline-none border-none cursor-pointer">
-                 <option value="gemini-3-pro-image-preview">Gemini 3.0 Pro</option>
-                 <option value="gemini-2.5-flash-image">Gemini 2.5 Flash</option>
-               </select>
+               <span className="text-xs font-bold text-gray-300">Gemini 3.0 Pro 4K</span>
             </div>
             <button onClick={handleLogout} className="flex items-center gap-1 hover:text-red-400 transition-colors py-1 px-3 rounded-lg hover:bg-white/5">
               <LogOut size={16} /> <span className="hidden sm:inline">Đổi Key</span>
@@ -317,7 +288,7 @@ const App: React.FC = () => {
         </div>
 
         <div className="grid lg:grid-cols-12 gap-8 items-start">
-          <div className="lg:col-span-5 flex flex-col gap-8">
+          <div className="lg:col-span-5 flex flex-col gap-6">
              {activeTab === 'try-on' && (
                 <>
                 <div className="bg-surface/50 p-6 rounded-2xl border border-gray-800 shadow-xl relative">
@@ -352,54 +323,13 @@ const App: React.FC = () => {
                   )}
                 </div>
 
-                <div className="bg-surface/50 p-6 rounded-2xl border border-gray-800 shadow-xl space-y-6">
-                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-                     <div>
-                       <label className="text-xs font-bold text-gray-500 uppercase tracking-widest block mb-3">Tỉ lệ ảnh</label>
-                       <div className="grid grid-cols-5 gap-1">
-                        {ASPECT_RATIOS.map((ratio) => (
-                          <button key={ratio.value} onClick={() => setTryOnAspectRatio(ratio.value)} className={`flex items-center justify-center p-2 rounded-lg border transition-all ${tryOnAspectRatio === ratio.value ? 'bg-primary/20 border-primary text-white' : 'bg-dark border-gray-700 text-gray-500 hover:border-gray-500'}`} title={ratio.label}>
-                              {ratio.icon}
-                          </button>
-                        ))}
-                       </div>
-                     </div>
-                     <div>
-                       <label className="text-xs font-bold text-gray-500 uppercase tracking-widest block mb-3">Số lượng</label>
-                       <div className="flex gap-2">
-                         {[1, 2, 4].map((n) => (
-                           <button key={n} onClick={() => setTryOnCount(n)} className={`flex-1 py-2 rounded-lg border transition-all ${tryOnCount === n ? 'bg-indigo-500/20 border-indigo-500 text-white' : 'bg-dark border-gray-700 text-gray-500'}`}>
-                              <span className="text-xs font-bold">{n}</span>
-                           </button>
-                         ))}
-                       </div>
-                     </div>
-                   </div>
-                   
-                   <div>
-                     <label className="text-xs font-bold text-gray-500 uppercase tracking-widest block mb-3">Chất lượng ảnh (Resolution)</label>
-                     <div className="flex gap-2">
-                        {IMAGE_SIZES.map((size) => (
-                          <button 
-                            key={size.value} 
-                            onClick={() => setTryOnImageSize(size.value)} 
-                            className={`flex-1 flex flex-col items-center justify-center py-2 px-1 rounded-xl border transition-all ${tryOnImageSize === size.value ? 'bg-secondary/20 border-secondary text-white' : 'bg-dark border-gray-700 text-gray-500 hover:border-gray-600'}`}
-                          >
-                             <span className="text-xs font-bold">{size.value}</span>
-                             <span className="text-[9px] opacity-70">{size.desc}</span>
-                          </button>
-                        ))}
-                     </div>
-                   </div>
-                </div>
-
                 <div className="bg-surface/50 p-6 rounded-2xl border border-gray-800 shadow-xl">
                   <div className="flex items-center gap-2 mb-6 text-secondary"><Shirt size={20} /><h3 className="text-lg font-semibold">2. Chọn trang phục</h3></div>
                   <UploadBox label="Trang phục" description="Tải lên bộ đồ bạn muốn thay cho mẫu" image={garmentImage} onImageSelected={(f) => processFile(f).then(setGarmentImage)} onClear={() => setGarmentImage(null)} disabled={tryOnStatus === GenerationStatus.PROCESSING} />
                 </div>
 
                 <button onClick={handleGenerateTryOn} disabled={!personImage || (!garmentImage && !accessoryImage) || tryOnStatus === GenerationStatus.PROCESSING} className="w-full py-4 px-6 rounded-xl font-bold text-lg bg-gradient-to-r from-primary to-secondary text-white shadow-lg flex items-center justify-center gap-3 transition-all transform hover:scale-[1.01]">
-                  <Sparkles size={20} className={tryOnStatus === GenerationStatus.PROCESSING ? 'animate-spin' : ''} /> {tryOnStatus === GenerationStatus.PROCESSING ? `Đang tạo ${tryOnCount} ảnh ${tryOnImageSize}...` : 'Bắt đầu hoán đổi'}
+                  <Sparkles size={20} className={tryOnStatus === GenerationStatus.PROCESSING ? 'animate-spin' : ''} /> {tryOnStatus === GenerationStatus.PROCESSING ? `Đang tạo ảnh 4K (9:16)...` : 'Bắt đầu hoán đổi'}
                 </button>
                 </>
              )}
@@ -409,35 +339,15 @@ const App: React.FC = () => {
                   <div className="bg-surface/50 p-6 rounded-2xl border border-gray-800 shadow-xl">
                     <UploadBox label="Ảnh gốc" description="Tải ảnh cần đổi nền" image={bgInputImage} onImageSelected={(f) => processFile(f).then(setBgInputImage)} onClear={() => setBgInputImage(null)} />
                   </div>
-                  <div className="bg-surface/50 p-6 rounded-2xl border border-gray-800 shadow-xl space-y-4">
-                     <div>
-                       <label className="text-xs font-bold text-gray-500 uppercase tracking-widest block mb-3">Tỉ lệ & Chất lượng</label>
-                       <div className="flex gap-3 mb-4 overflow-x-auto pb-1 custom-scrollbar">
-                         {ASPECT_RATIOS.map((ratio) => (
-                           <button key={ratio.value} onClick={() => setBgAspectRatio(ratio.value)} className={`flex-shrink-0 flex items-center gap-2 px-3 py-2 rounded-lg border transition-all ${bgAspectRatio === ratio.value ? 'bg-primary/20 border-primary text-white' : 'bg-dark border-gray-700 text-gray-500'}`}>
-                              {ratio.icon} <span className="text-xs font-bold">{ratio.label}</span>
-                           </button>
-                         ))}
-                       </div>
-                       <div className="flex gap-2">
-                          {IMAGE_SIZES.map((size) => (
-                            <button key={size.value} onClick={() => setBgImageSize(size.value)} className={`flex-1 py-2 rounded-lg border transition-all ${bgImageSize === size.value ? 'bg-secondary/20 border-secondary text-white' : 'bg-dark border-gray-700 text-gray-500'}`}>
-                               <span className="text-xs font-bold">{size.value}</span>
-                            </button>
-                          ))}
-                          <div className="w-px bg-gray-800 mx-2"></div>
-                          {[1, 2, 4].map((n) => (
-                            <button key={n} onClick={() => setBgCount(n)} className={`w-10 py-2 rounded-lg border transition-all ${bgCount === n ? 'bg-indigo-500/20 border-indigo-500 text-white' : 'bg-dark border-gray-700 text-gray-500'}`}>
-                               <span className="text-xs font-bold">{n}</span>
-                            </button>
-                          ))}
-                       </div>
-                     </div>
-                  </div>
                   <div className="bg-surface/50 p-6 rounded-2xl border border-gray-800 shadow-xl">
-                    <textarea value={bgPrompt} onChange={(e) => setBgPrompt(e.target.value)} placeholder="Mô tả nền mới (VD: Bãi biển, Studio, Đường phố...)" className="w-full bg-dark border border-gray-700 rounded-lg p-3 text-sm h-24 outline-none focus:ring-1 focus:ring-secondary" />
+                    <label className="text-xs font-bold text-gray-500 uppercase tracking-widest block mb-3">Mô tả bối cảnh mới</label>
+                    <textarea value={bgPrompt} onChange={(e) => setBgPrompt(e.target.value)} placeholder="VD: Studio hiện đại, bãi biển lúc hoàng hôn, đường phố London..." className="w-full bg-dark border border-gray-700 rounded-lg p-3 text-sm h-32 outline-none focus:ring-1 focus:ring-secondary resize-none" />
+                    <p className="text-[10px] text-gray-500 mt-2">Mặc định: 1 ảnh, tỉ lệ 9:16, chất lượng 4K.</p>
                   </div>
-                  <button onClick={handleGenerateBackground} disabled={!bgInputImage || bgStatus === GenerationStatus.PROCESSING} className="w-full py-4 bg-secondary text-white rounded-xl font-bold shadow-lg">Đổi Background</button>
+                  <button onClick={handleGenerateBackground} disabled={!bgInputImage || bgStatus === GenerationStatus.PROCESSING} className="w-full py-4 bg-secondary text-white rounded-xl font-bold shadow-lg flex items-center justify-center gap-2">
+                    {bgStatus === GenerationStatus.PROCESSING ? <Loader2 className="animate-spin" size={20} /> : <ImageIcon size={20} />}
+                    {bgStatus === GenerationStatus.PROCESSING ? 'Đang xử lý 4K...' : 'Đổi Background'}
+                  </button>
                 </div>
              )}
 
@@ -467,14 +377,36 @@ const App: React.FC = () => {
 
           <div className="lg:col-span-7">
              <div className="bg-surface/30 p-2 rounded-2xl border border-gray-800 shadow-2xl min-h-[500px]">
-                <ResultDisplay 
-                  status={activeTab === 'try-on' ? tryOnStatus : (activeTab === 'background' ? bgStatus : veoStatus)} 
-                  resultUrl={activeTab === 'try-on' ? tryOnResult : (activeTab === 'background' ? bgResult : null)} 
-                  error={activeTab === 'try-on' ? tryOnError : (activeTab === 'background' ? bgError : veoError)}
-                  onReset={() => resetAll()}
-                  onEditBackground={(p, idx) => {}} 
-                  onEditPose={() => {}}
-                />
+                {/* Fix: Specifically use correct error state names here. */}
+                {(isPermissionError(tryOnError) || isPermissionError(bgError) || isPermissionError(veoError)) && (
+                   <div className="p-8 flex flex-col items-center justify-center text-center space-y-4 animate-in fade-in zoom-in duration-300">
+                      <div className="w-16 h-16 rounded-full bg-red-500/20 flex items-center justify-center text-red-500 mb-2">
+                        <Lock size={32} />
+                      </div>
+                      <h3 className="text-xl font-bold text-white">Lỗi Quyền Truy Cập (403/404)</h3>
+                      <p className="text-gray-400 max-w-md text-sm leading-relaxed">
+                        Model Gemini 3.0 Pro yêu cầu một API Key từ dự án Google Cloud có cấu hình thanh toán (Paid Project). Key hiện tại không có quyền truy cập hoặc không tìm thấy model.
+                      </p>
+                      <div className="flex gap-3 pt-4">
+                        <button onClick={handleLogout} className="px-6 py-2 bg-primary text-white rounded-lg font-bold flex items-center gap-2 hover:bg-primary/80 transition-all">
+                           <Key size={16} /> Chọn Lại Key
+                        </button>
+                        <a href="https://ai.google.dev/gemini-api/docs/billing" target="_blank" className="px-6 py-2 bg-gray-800 text-gray-300 rounded-lg font-bold flex items-center gap-2 hover:bg-gray-700 transition-all">
+                           <ExternalLink size={16} /> Tìm hiểu thêm
+                        </a>
+                      </div>
+                   </div>
+                )}
+
+                {!isPermissionError(tryOnError) && !isPermissionError(bgError) && !isPermissionError(veoError) && (
+                   <ResultDisplay 
+                     status={activeTab === 'try-on' ? tryOnStatus : (activeTab === 'background' ? bgStatus : veoStatus)} 
+                     resultUrl={activeTab === 'try-on' ? tryOnResult : (activeTab === 'background' ? bgResult : null)} 
+                     error={activeTab === 'try-on' ? tryOnError : (activeTab === 'background' ? bgError : veoError)}
+                     onReset={() => resetAll()}
+                   />
+                )}
+                
                 {activeTab === 'veo-prompt' && veoPrompts.length > 0 && (
                    <div className="p-6 space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
                       <h4 className="font-bold flex items-center gap-2 text-primary uppercase text-xs tracking-widest"><Video size={14} /> Danh sách Prompt Video</h4>
