@@ -9,7 +9,6 @@ import { Sparkles, Shirt, User, LogOut, Lock, Image as ImageIcon, Copy, Loader2,
 // --- Constants ---
 const STORAGE_KEY_MODELS = 'swapnet_saved_models';
 const STORAGE_KEY_API = 'manual_api_key';
-const PREDEFINED_API_KEY = 'AIzaSyDIMtv5sMSn1u5Hr9YXg-STCBPNHnN9pCc';
 
 const App: React.FC = () => {
   const [hasKey, setHasKey] = useState(false);
@@ -95,11 +94,6 @@ const App: React.FC = () => {
         console.error("Failed to select key", e);
       }
     }
-  };
-
-  const handleUsePredefinedKey = () => {
-    localStorage.setItem(STORAGE_KEY_API, PREDEFINED_API_KEY);
-    setHasKey(true);
   };
 
   const handleSaveManualKey = () => {
@@ -263,13 +257,6 @@ const App: React.FC = () => {
           <div className="space-y-6">
             <button onClick={handleConnectKey} className="w-full py-4 px-6 bg-white text-dark hover:bg-gray-200 rounded-xl font-bold text-lg flex items-center justify-center gap-3 transition-all shadow-xl">
               <Key size={24} /> Chọn Key qua AI Studio
-            </button>
-
-            <button 
-              onClick={handleUsePredefinedKey} 
-              className="w-full py-3.5 px-6 bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 hover:bg-indigo-500/20 hover:border-indigo-500/40 rounded-xl font-bold text-sm flex items-center justify-center gap-2 transition-all"
-            >
-              <CheckCircle size={18} /> Sử dụng Key có sẵn (Thai Bin)
             </button>
 
             <div className="relative flex items-center gap-4 py-2">
