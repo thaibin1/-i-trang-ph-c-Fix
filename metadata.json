@@ -1,0 +1,7 @@
+{
+  "name": "Đổi trang phục AI by Thai Bin fix lỗi",
+  "description": "Ứng dụng thử đồ ảo chất lượng cao sử dụng Gemini 3 Pro Image. Tải lên ảnh của bạn và trang phục để xem ngay kết quả chân thực.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
