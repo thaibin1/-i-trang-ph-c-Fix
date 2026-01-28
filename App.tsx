@@ -1,25 +1,28 @@
 
-// Fix: Correct variable name typos and remove manual API key input UI.
 import React, { useState, useEffect } from 'react';
 import { UploadBox } from './components/UploadBox';
 import { ResultDisplay } from './components/ResultDisplay';
 import { generateVirtualTryOn, changeImageBackground, analyzeOutfit, generatePromptsFromAnalysis } from './services/geminiService';
 import { ImageAsset, GenerationStatus } from './types';
-import { Sparkles, Shirt, User, LogOut, Lock, Image as ImageIcon, Copy, Loader2, Video, Bookmark, Library, Hash, Key, ExternalLink, X, Cpu } from 'lucide-react';
+import { Sparkles, Shirt, User, LogOut, Lock, Image as ImageIcon, Copy, Loader2, Video, Bookmark, Library, Hash, Key, ExternalLink, X, Cpu, Zap, Save, CheckCircle } from 'lucide-react';
 
 // --- Constants ---
 const STORAGE_KEY_MODELS = 'swapnet_saved_models';
+const STORAGE_KEY_API = 'manual_api_key';
+const PREDEFINED_API_KEY = 'AIzaSyDIMtv5sMSn1u5Hr9YXg-STCBPNHnN9pCc';
 
 const App: React.FC = () => {
   const [hasKey, setHasKey] = useState(false);
+  const [manualKeyInput, setManualKeyInput] = useState('');
   
+  // Model selection state
   const [modelName, setModelName] = useState<string>('gemini-3-pro-image-preview');
   const [activeTab, setActiveTab] = useState<'try-on' | 'background' | 'veo-prompt'>('try-on');
 
   // --- MODEL LIBRARY STATE ---
   const [savedModels, setSavedModels] = useState<ImageAsset[]>([]);
 
-  // --- TRY-ON STATE (Defaults applied as requested) ---
+  // --- TRY-ON STATE ---
   const [personImage, setPersonImage] = useState<ImageAsset | null>(null);
   const [garmentImage, setGarmentImage] = useState<ImageAsset | null>(null);
   const [garmentDetailImage, setGarmentDetailImage] = useState<ImageAsset | null>(null);
@@ -33,7 +36,7 @@ const App: React.FC = () => {
   const [tryOnResult, setTryOnResult] = useState<string | string[] | null>(null);
   const [tryOnError, setTryOnError] = useState<string | null>(null);
 
-  // --- BACKGROUND CHANGE STATE (Defaults applied as requested) ---
+  // --- BACKGROUND CHANGE STATE ---
   const [bgInputImage, setBgInputImage] = useState<ImageAsset | null>(null);
   const [bgDetailImage, setBgDetailImage] = useState<ImageAsset | null>(null);
   const [customBgImage, setCustomBgImage] = useState<ImageAsset | null>(null);
@@ -55,6 +58,13 @@ const App: React.FC = () => {
 
   useEffect(() => {
     const checkKey = async () => {
+      // Check for manually saved key first
+      const savedManualKey = localStorage.getItem(STORAGE_KEY_API);
+      if (savedManualKey) {
+        setHasKey(true);
+        return;
+      }
+
       if ((window as any).aistudio) {
         try {
           const selected = await (window as any).aistudio.hasSelectedApiKey();
@@ -87,7 +97,22 @@ const App: React.FC = () => {
     }
   };
 
+  const handleUsePredefinedKey = () => {
+    localStorage.setItem(STORAGE_KEY_API, PREDEFINED_API_KEY);
+    setHasKey(true);
+  };
+
+  const handleSaveManualKey = () => {
+    if (manualKeyInput.trim()) {
+      localStorage.setItem(STORAGE_KEY_API, manualKeyInput.trim());
+      setHasKey(true);
+    } else {
+      alert("Vui lòng nhập API Key hợp lệ.");
+    }
+  };
+
   const handleLogout = () => {
+    localStorage.removeItem(STORAGE_KEY_API);
     setHasKey(false);
     resetAll();
   };
@@ -175,7 +200,6 @@ const App: React.FC = () => {
       setTryOnResult(results);
       setTryOnStatus(GenerationStatus.COMPLETED);
     } catch (err: any) {
-      // Fix: If Requested entity was not found, reset hasKey to force re-selection.
       if (err.message && (err.message.includes('Requested entity was not found') || err.message.includes('404'))) {
         setHasKey(false);
       }
@@ -193,7 +217,6 @@ const App: React.FC = () => {
       setBgResult(result);
       setBgStatus(GenerationStatus.COMPLETED);
     } catch (err: any) {
-      // Fix: If Requested entity was not found, reset hasKey to force re-selection.
       if (err.message && (err.message.includes('Requested entity was not found') || err.message.includes('404'))) {
         setHasKey(false);
       }
@@ -213,7 +236,6 @@ const App: React.FC = () => {
       setVeoPrompts(prompts);
       setVeoStatus(GenerationStatus.COMPLETED);
     } catch (err: any) {
-      // Fix: If Requested entity was not found, reset hasKey to force re-selection.
       if (err.message && (err.message.includes('Requested entity was not found') || err.message.includes('404'))) {
         setHasKey(false);
       }
@@ -231,16 +253,52 @@ const App: React.FC = () => {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-dark text-slate-100 p-4 relative overflow-hidden">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(99,102,241,0.15),transparent_70%)]"></div>
-        <div className="bg-surface p-8 md:p-12 rounded-2xl border border-gray-800 shadow-2xl max-w-lg w-full text-center relative z-10">
+        <div className="bg-surface p-8 md:p-12 rounded-3xl border border-gray-800 shadow-2xl max-w-lg w-full text-center relative z-10">
           <div className="w-20 h-20 bg-gradient-to-br from-primary to-secondary rounded-2xl mx-auto flex items-center justify-center mb-8 shadow-lg shadow-primary/20">
             <Sparkles size={40} className="text-white" />
           </div>
-          <h1 className="text-3xl font-bold mb-4">Đổi trang phục AI by Thai Bin</h1>
-          <p className="text-gray-400 mb-6">Sử dụng Gemini 3 Pro để tạo hình ảnh chất lượng cao 4K.</p>
-          <button onClick={handleConnectKey} className="w-full py-4 px-6 bg-white text-dark hover:bg-gray-200 rounded-xl font-bold text-lg flex items-center justify-center gap-3 transition-colors mb-6 shadow-xl">
-            <Key size={24} /> Chọn Key qua AI Studio
-          </button>
-          <p className="mt-8 text-xs text-gray-500 leading-relaxed">
+          <h1 className="text-3xl font-bold mb-4">AI Fashion Studio</h1>
+          <p className="text-gray-400 mb-8 text-sm">Vui lòng cung cấp API Key để bắt đầu sáng tạo.</p>
+          
+          <div className="space-y-6">
+            <button onClick={handleConnectKey} className="w-full py-4 px-6 bg-white text-dark hover:bg-gray-200 rounded-xl font-bold text-lg flex items-center justify-center gap-3 transition-all shadow-xl">
+              <Key size={24} /> Chọn Key qua AI Studio
+            </button>
+
+            <button 
+              onClick={handleUsePredefinedKey} 
+              className="w-full py-3.5 px-6 bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 hover:bg-indigo-500/20 hover:border-indigo-500/40 rounded-xl font-bold text-sm flex items-center justify-center gap-2 transition-all"
+            >
+              <CheckCircle size={18} /> Sử dụng Key có sẵn (Thai Bin)
+            </button>
+
+            <div className="relative flex items-center gap-4 py-2">
+              <div className="h-px bg-gray-800 flex-grow"></div>
+              <span className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">Hoặc tự nhập</span>
+              <div className="h-px bg-gray-800 flex-grow"></div>
+            </div>
+
+            <div className="flex flex-col gap-3">
+              <div className="relative">
+                <input 
+                  type="password" 
+                  value={manualKeyInput}
+                  onChange={(e) => setManualKeyInput(e.target.value)}
+                  placeholder="Dán API Key của bạn vào đây..." 
+                  className="w-full bg-dark border border-gray-700 rounded-xl py-4 pl-12 pr-4 text-gray-200 focus:ring-2 focus:ring-primary outline-none transition-all placeholder:text-gray-600"
+                />
+                <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-600" size={20} />
+              </div>
+              <button 
+                onClick={handleSaveManualKey}
+                className="w-full py-4 bg-gradient-to-r from-primary to-secondary text-white rounded-xl font-bold flex items-center justify-center gap-2 hover:shadow-lg hover:shadow-primary/20 transition-all"
+              >
+                <Save size={20} /> Sử dụng Key nhập tay
+              </button>
+            </div>
+          </div>
+
+          <p className="mt-8 text-[11px] text-gray-500 leading-relaxed">
             Lưu ý: Gemini 3 Pro yêu cầu API Key từ project Google Cloud có cấu hình thanh toán (Paid Project). 
             <br/>
             <a href="https://ai.google.dev/gemini-api/docs/billing" target="_blank" className="text-primary hover:underline mt-2 inline-flex items-center gap-1">Xem tài liệu billing <ExternalLink size={10} /></a>
@@ -258,16 +316,27 @@ const App: React.FC = () => {
             <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary to-secondary flex items-center justify-center">
               <Shirt className="text-white" size={20} />
             </div>
-            <h1 className="text-xl font-bold tracking-tight">AI Creative Studio <span className="text-xs align-top bg-primary/20 text-primary px-1.5 py-0.5 rounded ml-1">by Thai Bin</span></h1>
+            <h1 className="text-xl font-bold tracking-tight">AI Creative Studio <span className="text-xs align-top bg-primary/20 text-primary px-1.5 py-0.5 rounded ml-1">v2.0</span></h1>
           </div>
-          <div className="flex items-center gap-4 text-sm text-gray-400">
-            <div className="hidden md:flex items-center bg-gray-900 rounded-lg border border-gray-700 px-3 py-1">
-               <Cpu size={14} className="text-primary mr-2" />
-               <span className="text-xs font-bold text-gray-300">Gemini 3.0 Pro 4K</span>
-            </div>
-            <button onClick={handleLogout} className="flex items-center gap-1 hover:text-red-400 transition-colors py-1 px-3 rounded-lg hover:bg-white/5">
-              <LogOut size={16} /> <span className="hidden sm:inline">Đổi Key</span>
-            </button>
+          
+          <div className="flex items-center gap-4">
+             <div className="hidden sm:flex items-center bg-gray-900 border border-gray-800 rounded-lg p-0.5">
+                <button 
+                  onClick={() => setModelName('gemini-3-pro-image-preview')}
+                  className={`px-3 py-1.5 text-[10px] font-bold uppercase rounded-md transition-all ${modelName === 'gemini-3-pro-image-preview' ? 'bg-primary text-white shadow-lg' : 'text-gray-500 hover:text-gray-300'}`}
+                >
+                  Gemini 3 Pro
+                </button>
+                <button 
+                  onClick={() => setModelName('imagen-4.0-generate-001')}
+                  className={`px-3 py-1.5 text-[10px] font-bold uppercase rounded-md transition-all ${modelName === 'imagen-4.0-generate-001' ? 'bg-secondary text-white shadow-lg' : 'text-gray-500 hover:text-gray-300'}`}
+                >
+                  Imagen 4
+                </button>
+             </div>
+             <button onClick={handleLogout} className="flex items-center gap-1 hover:text-red-400 transition-colors py-2 px-3 rounded-lg hover:bg-white/5 text-gray-400">
+               <LogOut size={16} /> <span className="hidden md:inline text-xs font-bold uppercase">Đăng xuất</span>
+             </button>
           </div>
         </div>
       </header>
@@ -289,6 +358,15 @@ const App: React.FC = () => {
 
         <div className="grid lg:grid-cols-12 gap-8 items-start">
           <div className="lg:col-span-5 flex flex-col gap-6">
+             {modelName === 'imagen-4.0-generate-001' && activeTab !== 'veo-prompt' && (
+                <div className="bg-amber-500/10 border border-amber-500/30 p-4 rounded-xl flex gap-3 animate-in slide-in-from-top-2">
+                   <Zap className="text-amber-500 shrink-0" size={20} />
+                   <p className="text-xs text-amber-200 leading-relaxed">
+                     Lưu ý: <strong>Imagen 4</strong> là model text-to-image. Đối với các tác vụ "Thử Đồ" hoặc "Đổi Nền" cần tham chiếu hình ảnh, <strong>Gemini 3 Pro</strong> sẽ mang lại độ chính xác cao hơn về danh tính và phom dáng.
+                   </p>
+                </div>
+             )}
+
              {activeTab === 'try-on' && (
                 <>
                 <div className="bg-surface/50 p-6 rounded-2xl border border-gray-800 shadow-xl relative">
@@ -303,7 +381,7 @@ const App: React.FC = () => {
                         </button>
                     )}
                   </div>
-                  <UploadBox label="Người mẫu" description="Tải ảnh người mẫu gốc của bạn" image={personImage} onImageSelected={(f) => processFile(f).then(setPersonImage)} onClear={() => setPersonImage(null)} disabled={tryOnStatus === GenerationStatus.PROCESSING} />
+                  <UploadBox label="Người mẫu" description="Tải ảnh người mẫu gốc" image={personImage} onImageSelected={(f) => processFile(f).then(setPersonImage)} onClear={() => setPersonImage(null)} disabled={tryOnStatus === GenerationStatus.PROCESSING} />
 
                   {savedModels.length > 0 && (
                       <div className="mt-6 pt-6 border-t border-gray-800">
@@ -325,11 +403,11 @@ const App: React.FC = () => {
 
                 <div className="bg-surface/50 p-6 rounded-2xl border border-gray-800 shadow-xl">
                   <div className="flex items-center gap-2 mb-6 text-secondary"><Shirt size={20} /><h3 className="text-lg font-semibold">2. Chọn trang phục</h3></div>
-                  <UploadBox label="Trang phục" description="Tải lên bộ đồ bạn muốn thay cho mẫu" image={garmentImage} onImageSelected={(f) => processFile(f).then(setGarmentImage)} onClear={() => setGarmentImage(null)} disabled={tryOnStatus === GenerationStatus.PROCESSING} />
+                  <UploadBox label="Trang phục" description="Tải lên bộ đồ muốn thử" image={garmentImage} onImageSelected={(f) => processFile(f).then(setGarmentImage)} onClear={() => setGarmentImage(null)} disabled={tryOnStatus === GenerationStatus.PROCESSING} />
                 </div>
 
                 <button onClick={handleGenerateTryOn} disabled={!personImage || (!garmentImage && !accessoryImage) || tryOnStatus === GenerationStatus.PROCESSING} className="w-full py-4 px-6 rounded-xl font-bold text-lg bg-gradient-to-r from-primary to-secondary text-white shadow-lg flex items-center justify-center gap-3 transition-all transform hover:scale-[1.01]">
-                  <Sparkles size={20} className={tryOnStatus === GenerationStatus.PROCESSING ? 'animate-spin' : ''} /> {tryOnStatus === GenerationStatus.PROCESSING ? `Đang tạo ảnh 4K (9:16)...` : 'Bắt đầu hoán đổi'}
+                  <Sparkles size={20} className={tryOnStatus === GenerationStatus.PROCESSING ? 'animate-spin' : ''} /> {tryOnStatus === GenerationStatus.PROCESSING ? `Đang xử lý 4K...` : `Bắt đầu hoán đổi (${modelName.includes('imagen') ? 'Imagen' : 'Gemini'})`}
                 </button>
                 </>
              )}
@@ -344,9 +422,9 @@ const App: React.FC = () => {
                     <textarea value={bgPrompt} onChange={(e) => setBgPrompt(e.target.value)} placeholder="VD: Studio hiện đại, bãi biển lúc hoàng hôn, đường phố London..." className="w-full bg-dark border border-gray-700 rounded-lg p-3 text-sm h-32 outline-none focus:ring-1 focus:ring-secondary resize-none" />
                     <p className="text-[10px] text-gray-500 mt-2">Mặc định: 1 ảnh, tỉ lệ 9:16, chất lượng 4K.</p>
                   </div>
-                  <button onClick={handleGenerateBackground} disabled={!bgInputImage || bgStatus === GenerationStatus.PROCESSING} className="w-full py-4 bg-secondary text-white rounded-xl font-bold shadow-lg flex items-center justify-center gap-2">
+                  <button onClick={handleGenerateBackground} disabled={!bgInputImage || bgStatus === GenerationStatus.PROCESSING} className={`w-full py-4 text-white rounded-xl font-bold shadow-lg flex items-center justify-center gap-2 ${modelName.includes('imagen') ? 'bg-secondary' : 'bg-primary'}`}>
                     {bgStatus === GenerationStatus.PROCESSING ? <Loader2 className="animate-spin" size={20} /> : <ImageIcon size={20} />}
-                    {bgStatus === GenerationStatus.PROCESSING ? 'Đang xử lý 4K...' : 'Đổi Background'}
+                    {bgStatus === GenerationStatus.PROCESSING ? 'Đang xử lý 4K...' : `Đổi Background (${modelName.includes('imagen') ? 'Imagen' : 'Gemini'})`}
                   </button>
                 </div>
              )}
@@ -377,7 +455,6 @@ const App: React.FC = () => {
 
           <div className="lg:col-span-7">
              <div className="bg-surface/30 p-2 rounded-2xl border border-gray-800 shadow-2xl min-h-[500px]">
-                {/* Fix: Specifically use correct error state names here. */}
                 {(isPermissionError(tryOnError) || isPermissionError(bgError) || isPermissionError(veoError)) && (
                    <div className="p-8 flex flex-col items-center justify-center text-center space-y-4 animate-in fade-in zoom-in duration-300">
                       <div className="w-16 h-16 rounded-full bg-red-500/20 flex items-center justify-center text-red-500 mb-2">
@@ -385,11 +462,11 @@ const App: React.FC = () => {
                       </div>
                       <h3 className="text-xl font-bold text-white">Lỗi Quyền Truy Cập (403/404)</h3>
                       <p className="text-gray-400 max-w-md text-sm leading-relaxed">
-                        Model Gemini 3.0 Pro yêu cầu một API Key từ dự án Google Cloud có cấu hình thanh toán (Paid Project). Key hiện tại không có quyền truy cập hoặc không tìm thấy model.
+                        Model này yêu cầu API Key từ dự án Google Cloud có cấu hình thanh toán (Paid Project). Key hiện tại không có quyền truy cập hoặc không tìm thấy model.
                       </p>
                       <div className="flex gap-3 pt-4">
                         <button onClick={handleLogout} className="px-6 py-2 bg-primary text-white rounded-lg font-bold flex items-center gap-2 hover:bg-primary/80 transition-all">
-                           <Key size={16} /> Chọn Lại Key
+                           <Key size={16} /> Nhập Key mới
                         </button>
                         <a href="https://ai.google.dev/gemini-api/docs/billing" target="_blank" className="px-6 py-2 bg-gray-800 text-gray-300 rounded-lg font-bold flex items-center gap-2 hover:bg-gray-700 transition-all">
                            <ExternalLink size={16} /> Tìm hiểu thêm

@@ -1,7 +1,15 @@
 
-// Fix: Use standard imports and ensure manual key logic is removed.
 import { GoogleGenAI, Type, GenerateContentResponse } from "@google/genai";
 import { ImageAsset } from "../types";
+
+// Helper to get the API Key (Manual vs Environment)
+const getApiKey = () => {
+  if (typeof window !== 'undefined') {
+    const savedKey = localStorage.getItem('manual_api_key');
+    if (savedKey) return savedKey;
+  }
+  return process.env.API_KEY;
+};
 
 // Helper to remove data URL prefix for API
 const cleanBase64 = (dataUrl: string) => {
@@ -40,23 +48,24 @@ const retry = async <T>(fn: () => Promise<T>, maxRetries = 3, initialDelay = 200
 };
 
 const extractImageFromResponse = (response: any): string => {
-  const candidate = response.candidates?.[0];
-  
-  if (!candidate) {
-    throw new Error("API không trả về kết quả nào.");
+  if (response.generatedImages && response.generatedImages.length > 0) {
+    const imgData = response.generatedImages[0].image.imageBytes;
+    return `data:image/png;base64,${imgData}`;
   }
 
-  const safetyRatings = candidate.safetyRatings || [];
-  const blockedRating = safetyRatings.find((r: any) => r.blocked === true);
+  const candidate = response.candidates?.[0];
+  if (!candidate) throw new Error("API không trả về kết quả nào.");
 
-  if (candidate.finishReason === 'SAFETY' || blockedRating) {
-    throw new Error("Hình ảnh bị chặn bởi bộ lọc an toàn.");
+  if (candidate.finishReason === 'SAFETY') {
+    throw new Error("Hình ảnh bị chặn bởi bộ lọc an toàn của Google. Vui lòng thử ảnh khác ít nhạy cảm hơn.");
+  }
+
+  if (candidate.finishReason === 'IMAGE_OTHER') {
+    throw new Error("Quá trình tạo ảnh bị gián đoạn (IMAGE_OTHER). Model gặp khó khăn với chi tiết hoặc vi phạm chính sách ẩn. Thử lại với ảnh rõ ràng hơn.");
   }
 
   const parts = candidate.content?.parts;
-  if (!parts || parts.length === 0) {
-    throw new Error("AI không tạo được ảnh.");
-  }
+  if (!parts || parts.length === 0) throw new Error("AI không tạo được dữ liệu ảnh.");
   
   for (const part of parts) {
     if (part.inlineData && part.inlineData.data) {
@@ -65,30 +74,24 @@ const extractImageFromResponse = (response: any): string => {
   }
   
   const textPart = parts.find((p: any) => p.text);
-  if (textPart) {
-    throw new Error(`AI: ${textPart.text}`);
-  }
+  if (textPart && textPart.text) throw new Error(`AI phản hồi: ${textPart.text}`);
 
-  throw new Error("Không tìm thấy dữ liệu hình ảnh.");
+  throw new Error("Không tìm thấy dữ liệu hình ảnh trong phản hồi của AI.");
 };
 
 const handleError = (error: any) => {
-  console.error("Gemini API Error:", error);
+  console.error("Gemini API Error Detail:", error);
   const errorMsg = error.message || "";
   
-  // Handle 403 Permission Denied specifically
-  if (errorMsg.includes('403') || errorMsg.includes('PERMISSION_DENIED') || errorMsg.toLowerCase().includes('permission denied')) {
-    throw new Error("Lỗi 403 (Permission Denied): Project của bạn có thể chưa bật Billing hoặc model này yêu cầu Key từ một dự án Google Cloud có trả phí. Vui lòng kiểm tra lại tại ai.google.dev/gemini-api/docs/billing");
+  if (errorMsg.includes('403') || errorMsg.includes('PERMISSION_DENIED')) {
+    throw new Error("Lỗi 403 (Permission Denied): Model này yêu cầu API Key từ project có trả phí hoặc bạn đã hết hạn mức.");
   }
 
-  // Handle 404 Requested entity was not found
-  if (errorMsg.includes('404') || errorMsg.includes('Requested entity was not found')) {
-    throw new Error("Lỗi 404: Không tìm thấy model hoặc tài nguyên. Có thể key của bạn không có quyền truy cập model này. Thử chọn lại API Key.");
+  if (errorMsg.includes('404') || errorMsg.includes('not found')) {
+    throw new Error("Lỗi 404: Không tìm thấy model. Vui lòng kiểm tra lại quyền truy cập của API Key.");
   }
 
-  if (errorMsg.includes('API key')) {
-       throw new Error("Lỗi API Key: Key không hợp lệ hoặc đã hết hạn.");
-  }
+  if (errorMsg.includes('API key')) throw new Error("Lỗi API Key: Key không hợp lệ.");
   
   throw new Error(errorMsg || "Xử lý thất bại.");
 };
@@ -105,70 +108,48 @@ const executeSingleTryOn = async (
   imageSize: string,
   modelName: string
 ): Promise<string | null> => {
-  // Fix: Create new instance right before use to ensure latest API Key.
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  const apiKey = getApiKey();
+  const ai = new GoogleGenAI({ apiKey: apiKey || '' });
 
-  const basePrompt = `
-    You are a professional AI fashion photo editor.
-    TASK: Dress the person in IMAGE 1 with the exact clothing shown in IMAGE 2.
-    
-    CRITICAL GUIDELINES:
-    1. IMAGE 1 is the absolute reference for the person's identity, face, body pose, and background.
-    2. IMAGE 2 is the reference for the target garment/clothing.
-    3. Replace ONLY the existing clothes on the person in IMAGE 1 with the items from IMAGE 2.
-    4. KEEP the original person's head, face, skin tone, hairstyle, and the EXACT background from IMAGE 1 completely unchanged.
-    5. The new clothing must fit naturally onto the person's body structure in IMAGE 1.
-    6. Ensure photorealistic textures, fabric folds, and lighting consistency between the person and the environment.
-    7. Aspect Ratio: ${aspectRatio}.
-    ${instructions ? `8. Additional style notes: ${instructions}` : ''}
-    
-    OUTPUT: Provide ONLY the final generated image.
-  `;
+  if (modelName === 'imagen-4.0-generate-001') {
+    const prompt = `A professional full body photograph of a person wearing ${instructions || 'this garment'}. High fashion style, 4k resolution, studio lighting.`;
+    try {
+      const response = await retry(() => ai.models.generateImages({
+        model: modelName,
+        prompt: prompt,
+        config: { numberOfImages: 1, aspectRatio: aspectRatio as any }
+      }));
+      return extractImageFromResponse(response);
+    } catch (e) { handleError(e); return null; }
+  }
+
+  const basePrompt = `A high-quality professional studio photograph. 
+    The person from IMAGE 1 is now wearing the exact clothing items shown in IMAGE 2. 
+    The person's facial features, pose, hair, and background from IMAGE 1 must remain exactly the same. 
+    The clothing fit should be perfectly matched to the person's body shape. 
+    ${instructions ? `Style guidance: ${instructions}` : ''}`;
 
   const parts: any[] = [
-    { inlineData: { mimeType: personImage.mimeType, data: cleanBase64(personImage.data) } } // IMAGE 1
-  ];
-
-  if (garmentImage) {
-    parts.push({ inlineData: { mimeType: garmentImage.mimeType, data: cleanBase64(garmentImage.data) } }); // IMAGE 2
-  }
-
-  if (garmentDetailImage) {
-    parts.push({ inlineData: { mimeType: garmentDetailImage.mimeType, data: cleanBase64(garmentDetailImage.data) } });
-  }
-
-  if (accessoryImage) {
-    parts.push({ inlineData: { mimeType: accessoryImage.mimeType, data: cleanBase64(accessoryImage.data) } });
-  }
-
-  parts.push({ text: basePrompt });
+    { inlineData: { mimeType: personImage.mimeType, data: cleanBase64(personImage.data) } },
+    garmentImage ? { inlineData: { mimeType: garmentImage.mimeType, data: cleanBase64(garmentImage.data) } } : null,
+    garmentDetailImage ? { inlineData: { mimeType: garmentDetailImage.mimeType, data: cleanBase64(garmentDetailImage.data) } } : null,
+    accessoryImage ? { inlineData: { mimeType: accessoryImage.mimeType, data: cleanBase64(accessoryImage.data) } } : null,
+    { text: basePrompt }
+  ].filter(Boolean);
 
   try {
     const config: any = { 
-      imageConfig: { aspectRatio },
+      imageConfig: { aspectRatio: aspectRatio, imageSize: imageSize },
       safetySettings: [
-        { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_ONLY_HIGH' },
-        { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_ONLY_HIGH' },
-        { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_ONLY_HIGH' },
-        { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_ONLY_HIGH' },
+        { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
+        { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
+        { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
+        { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' },
       ]
     };
-    
-    if (modelName === 'gemini-3-pro-image-preview') {
-        config.imageConfig.imageSize = imageSize;
-    }
-
-    const response = await retry<GenerateContentResponse>(() => ai.models.generateContent({
-      model: modelName,
-      contents: { parts: parts },
-      config: config
-    }));
-    
+    const response = await retry<GenerateContentResponse>(() => ai.models.generateContent({ model: modelName, contents: { parts }, config }));
     return extractImageFromResponse(response);
-  } catch (error: any) {
-    handleError(error);
-    return null;
-  }
+  } catch (error: any) { handleError(error); return null; }
 };
 
 export const generateVirtualTryOn = async (
@@ -182,36 +163,17 @@ export const generateVirtualTryOn = async (
   modelName: string = "gemini-3-pro-image-preview",
   count: number = 1
 ): Promise<string[]> => {
-  const tasks = [];
-  for (let i = 0; i < count; i++) {
-    tasks.push(executeSingleTryOn(
-      personImage, 
-      garmentImage, 
-      garmentDetailImage, 
-      accessoryImage, 
-      instructions, 
-      aspectRatio, 
-      imageSize, 
-      modelName
-    ));
-  }
-  
+  const tasks = Array.from({ length: count }, () => executeSingleTryOn(personImage, garmentImage, garmentDetailImage, accessoryImage, instructions, aspectRatio, imageSize, modelName));
   const results = await Promise.allSettled(tasks);
   const validResults: string[] = [];
   let lastErrorMsg = "";
 
   results.forEach((res) => {
-    if (res.status === 'fulfilled' && res.value) {
-      validResults.push(res.value);
-    } else if (res.status === 'rejected') {
-      lastErrorMsg = res.reason?.message || "Lỗi hệ thống.";
-    }
+    if (res.status === 'fulfilled' && res.value) validResults.push(res.value);
+    else if (res.status === 'rejected') lastErrorMsg = res.reason?.message || "Lỗi hệ thống.";
   });
 
-  if (validResults.length === 0) {
-    throw new Error(lastErrorMsg || "Không thể tạo ảnh.");
-  }
-
+  if (validResults.length === 0) throw new Error(lastErrorMsg || "AI không tạo được dữ liệu ảnh.");
   return validResults;
 };
 
@@ -224,82 +186,62 @@ export const changeImageBackground = async (
   modelName: string = "gemini-3-pro-image-preview",
   customBgImage: ImageAsset | null = null
 ): Promise<string> => {
-  // Fix: Create new instance right before use to ensure latest API Key.
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  const apiKey = getApiKey();
+  const ai = new GoogleGenAI({ apiKey: apiKey || '' });
+
+  if (modelName === 'imagen-4.0-generate-001') {
+    try {
+      const response = await retry(() => ai.models.generateImages({
+        model: modelName,
+        prompt: backgroundPrompt,
+        config: { numberOfImages: 1, aspectRatio: aspectRatio as any }
+      }));
+      return extractImageFromResponse(response);
+    } catch (e) { handleError(e); return ""; }
+  }
 
   const prompt = `Keep the subject identical. Replace background with: ${customBgImage ? 'the environment from the reference' : backgroundPrompt}.`;
-  const parts: any[] = [{ inlineData: { mimeType: 'image/png', data: cleanBase64(imageDataUrl) } }];
-  if (detailImage) parts.push({ inlineData: { mimeType: detailImage.mimeType, data: cleanBase64(detailImage.data) } });
-  if (customBgImage) parts.push({ inlineData: { mimeType: customBgImage.mimeType, data: cleanBase64(customBgImage.data) } });
-  parts.push({ text: prompt });
+  const parts: any[] = [
+    { inlineData: { mimeType: 'image/png', data: cleanBase64(imageDataUrl) } },
+    detailImage ? { inlineData: { mimeType: detailImage.mimeType, data: cleanBase64(detailImage.data) } } : null,
+    customBgImage ? { inlineData: { mimeType: customBgImage.mimeType, data: cleanBase64(customBgImage.data) } } : null,
+    { text: prompt }
+  ].filter(Boolean);
 
   try {
-    const config: any = { 
-      imageConfig: { aspectRatio },
-      safetySettings: [
-        { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_ONLY_HIGH' },
-        { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_ONLY_HIGH' },
-        { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_ONLY_HIGH' },
-        { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_ONLY_HIGH' },
-      ]
-    };
-    if (modelName === 'gemini-3-pro-image-preview') config.imageConfig.imageSize = imageSize;
+    const config: any = { imageConfig: { aspectRatio: aspectRatio, imageSize: imageSize }, safetySettings: [{ category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' }] };
     const response = await ai.models.generateContent({ model: modelName, contents: { parts }, config });
     return extractImageFromResponse(response);
   } catch (error) { handleError(error); return ""; }
 };
 
-export const changeImageBackgroundBatch = async (
-  imageDataUrl: string,
-  prompts: string[],
-  detailImage: ImageAsset | null = null,
-  aspectRatio: string = "9:16",
-  imageSize: string = "4K",
-  modelName: string = "gemini-3-pro-image-preview",
-  customBgImage: ImageAsset | null = null
-): Promise<string[]> => {
-  const results = await Promise.all(prompts.map(p => changeImageBackground(imageDataUrl, p, detailImage, aspectRatio, imageSize, modelName, customBgImage).catch((e) => {
-    console.error("Batch background error item:", e);
-    return null;
-  })));
-  return results.filter((r): r is string => r !== null);
-};
-
 export const analyzeOutfit = async (image: ImageAsset, detailImage: ImageAsset | null): Promise<string> => {
-  // Fix: Create new instance right before use to ensure latest API Key.
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-  const parts: any[] = [{ inlineData: { mimeType: image.mimeType, data: cleanBase64(image.data) } }];
-  if (detailImage) parts.push({ inlineData: { mimeType: detailImage.mimeType, data: cleanBase64(detailImage.data) } });
-  parts.push({ text: "Describe this outfit for high-quality video generation." });
+  const apiKey = getApiKey();
+  const ai = new GoogleGenAI({ apiKey: apiKey || '' });
+  const parts: any[] = [
+    { inlineData: { mimeType: image.mimeType, data: cleanBase64(image.data) } },
+    detailImage ? { inlineData: { mimeType: detailImage.mimeType, data: cleanBase64(detailImage.data) } } : null,
+    { text: "Describe this outfit for high-quality video generation." }
+  ].filter(Boolean);
   try {
     const response = await ai.models.generateContent({ model: 'gemini-3-pro-preview', contents: { parts } });
     return response.text || "";
-  } catch (e) {
-    handleError(e);
-    return "";
-  }
+  } catch (e) { handleError(e); return ""; }
 };
 
 export const generatePromptsFromAnalysis = async (analysis: string, count: number): Promise<string[]> => {
-  // Fix: Create new instance right before use to ensure latest API Key.
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  const apiKey = getApiKey();
+  const ai = new GoogleGenAI({ apiKey: apiKey || '' });
   try {
     const response = await ai.models.generateContent({
       model: 'gemini-3-pro-preview',
       contents: analysis,
       config: {
-        systemInstruction: `Generate ${count} video motion prompts. Return JSON { "prompts": [] }.`,
+        systemInstruction: `Generate ${count} video motion prompts for this outfit. Return JSON { "prompts": [] }.`,
         responseMimeType: 'application/json',
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: { prompts: { type: Type.ARRAY, items: { type: Type.STRING } } }
-        }
+        responseSchema: { type: Type.OBJECT, properties: { prompts: { type: Type.ARRAY, items: { type: Type.STRING } } } }
       }
     });
-    const parsed = JSON.parse(response.text || "{}");
-    return parsed.prompts || [];
-  } catch (e) {
-    handleError(e);
-    return [];
-  }
+    return JSON.parse(response.text || "{}").prompts || [];
+  } catch (e) { handleError(e); return []; }
 };
