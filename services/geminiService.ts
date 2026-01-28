@@ -1,4 +1,4 @@
-const API_KEY =AIzaSyAPCyQtCssOnBiQYzFkdnuTN46eNxndOyw
+const API_KEY = AIzaSyAPCyQtCssOnBiQYzFkdnuTN46eNxndOyw
   localStorage.getItem("gemini_api_key") ||
   import.meta.env.VITE_GEMINI_API_KEY;
 
